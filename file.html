@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Symptom Tap</title>
+<meta name="theme-color" content="#0b1220" />
+<meta name="description" content="Ultra-fast, offline-friendly tap-to-log symptom tracker." />
+<style>
+  :root{--bg:#0b1220;--card:#121a2b;--muted:#7e8aa3;--text:#e8edf7;--accent:#6ee7b7;--danger:#f87171;--ok:#a7f3d0}
+  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial;background:var(--bg);color:var(--text)}
+  header{position:sticky;top:0;z-index:10;background:linear-gradient(180deg,rgba(11,18,32,.9),rgba(11,18,32,.6));backdrop-filter:blur(8px);border-bottom:1px solid #1f2a44}
+  .wrap{max-width:920px;margin:0 auto;padding:16px}
+  .row{display:flex;gap:12px;flex-wrap:wrap}
+  .card{background:var(--card);border:1px solid #1f2a44;border-radius:16px;padding:14px}
+  button{border:1px solid #223055;background:#18223a;color:var(--text);padding:10px 12px;border-radius:12px;cursor:pointer}
+  button:hover{filter:brightness(1.1)} button:active{transform:translateY(1px)}
+  .btn-lg{padding:14px 16px;font-weight:600}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  @media (min-width:760px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+  input,select,textarea{width:100%;padding:10px;border-radius:10px;border:1px solid #2a3a5e;background:#0e1527;color:var(--text)}
+  small{color:var(--muted)}
+  .status{display:inline-flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:99px;display:inline-block}
+  .dot.ok{background:var(--accent)} .dot.off{background:var(--danger)} .dot.cache{background:var(--ok)}
+  .list{max-height:220px;overflow:auto;border:1px dashed #293a63;border-radius:12px;padding:8px}
+  .item{display:flex;gap:8px;align-items:flex-start;padding:8px;border-bottom:1px solid #1f2a44}
+  .item:last-child{border-bottom:none}
+  details summary{cursor:pointer}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap row" style="justify-content:space-between;align-items:center">
+    <div>
+      <strong>Symptom Tap</strong>
+      <div class="status">
+        <span class="dot off" id="netDot"></span><small id="netText">offline</small>
+        <span class="dot cache" id="cacheDot"></span><small id="cacheText">0 cached</small>
+        <span class="dot ok" id="syncDot"></span><small id="syncText">idle</small>
+      </div>
+    </div>
+    <div class="row">
+      <button id="exportCsv">Export CSV</button>
+      <button id="sendEmailNow">Send CSV now</button>
+    </div>
+  </div>
+</header>
+
+<main class="wrap row">
+  <!-- QUICK TAPS -->
+  <section class="card" style="flex:2 1 560px">
+    <h3 style="margin:6px 0 10px">Quick log</h3>
+    <div class="grid" id="quickBtns"></div>
+    <div class="row" style="margin-top:10px">
+      <select id="side">
+        <option value="">Side (optional)</option>
+        <option>Left</option><option>Right</option><option>Both</option><option>N/A</option>
+      </select>
+      <select id="severity">
+        <option value="">Severity (0–3)</option>
+        <option value="0">0 – none</option>
+        <option value="1">1 – mild</option>
+        <option value="2">2 – moderate</option>
+        <option value="3">3 – severe</option>
+      </select>
+    </div>
+    <div style="margin-top:8px">
+      <textarea id="notes" rows="2" placeholder="Optional notes"></textarea>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="btn-lg" id="addCustom">+ Add custom symptom</button>
+    </div>
+  </section>
+
+  <!-- RECENT LOGS -->
+  <section class="card" style="flex:1 1 280px;min-width:280px">
+    <h3 style="margin:6px 0 10px">Recent (local)</h3>
+    <div class="list" id="recent"></div>
+    <small>Entries cache locally first; if you later enable cloud, they’ll sync when online.</small>
+  </section>
+
+  <!-- EMAIL DELIVERY (no DB) -->
+  <section class="card" style="flex:1 1 100%;min-width:280px">
+    <h3 style="margin:6px 0 10px">Email delivery</h3>
+    <div class="row">
+      <input id="emailTo" placeholder="Send CSV to (your email)" />
+      <input id="emailSubj" placeholder="Email subject (optional)" />
+    </div>
+    <details style="margin-top:8px">
+      <summary>Optional: EmailJS keys (for one-tap send, no backend)</summary>
+      <small>Fill these only if you want the app to send directly without opening your mail client.</small>
+      <div class="row" style="margin-top:6px">
+        <input id="ejService" placeholder="EmailJS service_id" />
+        <input id="ejTemplate" placeholder="EmailJS template_id" />
+        <input id="ejPublic" placeholder="EmailJS public key" />
+      </div>
+      <div class="row" style="margin-top:8px"><button id="saveEmailCfg">Save email settings</button></div>
+    </details>
+  </section>
+
+  <!-- ADVANCED (DB) -->
+  <section class="card" style="flex:1 1 100%;min-width:280px">
+    <details>
+      <summary><strong>Advanced</strong> — Cloud sync (Supabase, optional)</summary>
+      <div class="row" style="margin-top:8px">
+        <input id="sbUrl" placeholder="Supabase URL (https://xxxx.supabase.co)" />
+        <input id="sbKey" placeholder="Supabase anon public key" />
+        <input id="sbSchema" placeholder="Schema (default: public)" />
+        <input id="sbTable" placeholder="Table (default: symptom_events)" />
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="saveCfg">Save config</button>
+        <button id="testConn">Test connection</button>
+        <button id="forceSync">Force sync</button>
+      </div>
+      <small>Skip this whole section if you don’t want cloud right now.</small>
+    </details>
+  </section>
+</main>
+
+<!-- Dependencies -->
+<script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
+<script>
+/* =======================
+   Single-file PWA bootstraps
+   ======================= */
+// 1) Generate icons (simple canvas) and manifest at runtime
+(function makeIconsAndManifest(){
+  function makeIcon(size){
+    const c = document.createElement('canvas'); c.width=c.height=size;
+    const g = c.getContext('2d');
+    g.fillStyle='#0b1220'; g.fillRect(0,0,size,size);
+    g.fillStyle='#6ee7b7'; g.beginPath(); g.arc(size/2,size/2,size*0.35,0,Math.PI*2); g.fill();
+    g.fillStyle='#0b1220'; g.font=`${Math.floor(size*0.32)}px system-ui,Segoe UI,Roboto`; g.textAlign='center'; g.textBaseline='middle'; g.fillText('ST', size/2, size/2+1);
+    return c.toDataURL('image/png');
+  }
+  const icon192 = makeIcon(192);
+  const icon512 = makeIcon(512);
+  const manifest = {
+    name:"Symptom Tap", short_name:"SymptomTap",
+    start_url:".", display:"standalone",
+    background_color:"#0b1220", theme_color:"#0b1220",
+    icons:[{src:icon192,sizes:"192x192",type:"image/png"},{src:icon512,sizes:"512x512",type:"image/png"}]
+  };
+  const blob = new Blob([JSON.stringify(manifest)], {type:'application/manifest+json'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('link'); link.rel='manifest'; link.href=url; document.head.appendChild(link);
+
+  // iOS touch icon
+  const touch = document.createElement('link'); touch.rel='apple-touch-icon'; touch.href=icon192; document.head.appendChild(touch);
+})();
+
+// 2) Register a service worker from a Blob (so we stay single-file)
+if ('serviceWorker' in navigator) {
+  const swCode = `
+    const CACHE = 'symptomtap-v1';
+    const APP_SHELL = ['.'];
+    self.addEventListener('install', e => {
+      e.waitUntil(caches.open(CACHE).then(c=>c.addAll(APP_SHELL)));
+    });
+    self.addEventListener('activate', e => {
+      e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));
+    });
+    self.addEventListener('fetch', e => {
+      e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request)));
+    });
+  `;
+  const swBlob = new Blob([swCode], {type:'text/javascript'});
+  const swUrl = URL.createObjectURL(swBlob);
+  navigator.serviceWorker.register(swUrl).catch(console.error);
+}
+
+/* =======================
+   App code
+   ======================= */
+const DEFAULT_BUTTONS = [
+  {label:"Twitch – left leg", category:"motor"},
+  {label:"Twitch – right leg", category:"motor"},
+  {label:"Twitch – left arm", category:"motor"},
+  {label:"Twitch – right arm", category:"motor"},
+  {label:"Head pressure", category:"neuro"},
+  {label:"Neck stiffness", category:"musculo"},
+  {label:"Chest pinprick", category:"cardio"},
+  {label:"Nausea", category:"gi"}
+];
+
+// Prefill your email; user can overwrite and Save
+const state = {
+  buttons: JSON.parse(localStorage.getItem('buttons')||'null') || DEFAULT_BUTTONS,
+  cfg: JSON.parse(localStorage.getItem('cfg')||'{}'),
+  email: JSON.parse(localStorage.getItem('email')||'null') || {
+    to: 'johannvis@gmail.com',
+    subj: 'SymptomTap export',
+    ejService: '',
+    ejTemplate: '',
+    ejPublic: ''
+  },
+  syncing:false
+};
+
+const store = localforage.createInstance({name:'symptomtap'});
+const $ = (id)=>document.getElementById(id);
+const nowIso = ()=>new Date().toISOString();
+
+function renderButtons(){
+  const grid = $('quickBtns'); grid.innerHTML='';
+  state.buttons.forEach(b=>{
+    const btn = document.createElement('button');
+    btn.textContent = b.label; btn.title = b.category; btn.onclick=()=>logTap(b.label,b.category);
+    grid.appendChild(btn);
+  });
+}
+async function queuePush(ev){
+  const arr = (await store.getItem('queue')) || [];
+  arr.push(ev); await store.setItem('queue',arr);
+  updateCacheCount(); renderRecent();
+}
+async function getAllLocal(){ return (await store.getItem('queue')) || [] }
+async function clearLocal(){ await store.setItem('queue',[]); updateCacheCount(); renderRecent(); }
+const netStatus = ()=>navigator.onLine;
+function setDots(){
+  $('netDot').className = 'dot ' + (netStatus()? 'ok':'off');
+  $('netText').textContent = netStatus()? 'online':'offline';
+  $('syncDot').className = 'dot ' + (state.syncing? 'ok':'cache');
+  $('syncText').textContent = state.syncing? 'syncing':'idle';
+}
+async function updateCacheCount(){
+  const q = await getAllLocal();
+  $('cacheText').textContent = q.length + ' cached';
+}
+function renderRecent(){
+  const box = $('recent'); box.innerHTML='';
+  getAllLocal().then(list => {
+    list.slice(-50).reverse().forEach(ev=>{
+      const d = document.createElement('div'); d.className='item';
+      d.innerHTML = `<small>${new Date(ev.ts).toLocaleString()}</small> <div><strong>${ev.symptom}</strong><br><small>${ev.category||''} ${ev.side?('· '+ev.side):''} ${ev.severity!==''&&ev.severity!=null?('· sev '+ev.severity):''} ${ev.notes?('· '+ev.notes):''}</small></div>`;
+      box.appendChild(d);
+    });
+  });
+}
+async function logTap(symptom, category){
+  const ev = {
+    ts: nowIso(),
+    symptom, category,
+    side: $('side').value || null,
+    severity: $('severity').value !== ''? Number($('severity').value): null,
+    notes: $('notes').value || null,
+    device_id: await deviceId(),
+  };
+  $('notes').value=''; $('severity').value=''; $('side').value='';
+  await queuePush(ev); trySync();
+}
+async function deviceId(){
+  let id = localStorage.getItem('device_id');
+  if(!id){ id = 'dev_'+(crypto.randomUUID? crypto.randomUUID() : Math.random().toString(36).slice(2)); localStorage.setItem('device_id',id); }
+  return id;
+}
+
+// Helpers
+function chunkArray(arr, size){ const out=[]; for(let i=0;i<arr.length;i+=size){ out.push(arr.slice(i,i+size)); } return out; }
+function csvCell(v){ if(v==null) return ''; const s=String(v).replaceAll('"','""'); return /[",\n]/.test(s)? '"'+s+'"' : s }
+async function buildCSV(){
+  const list = await getAllLocal();
+  const cols = ['ts','symptom','category','side','severity','notes','device_id'];
+  const rows = [cols.join(',')].concat(list.map(o=> cols.map(c=> csvCell(o[c])).join(',')));
+  const csv = rows.join('\n');
+  const filename = 'symptomtap-export-'+new Date().toISOString().replace(/[:.]/g,'-')+'.csv';
+  return { csv, filename };
+}
+
+// Email (EmailJS or mailto fallback)
+function fillEmailInputs(){
+  $('emailTo').value = state.email?.to||'';
+  $('emailSubj').value = state.email?.subj||'';
+  $('ejService').value = state.email?.ejService||'';
+  $('ejTemplate').value = state.email?.ejTemplate||'';
+  $('ejPublic').value = state.email?.ejPublic||'';
+}
+function saveEmailCfg(){
+  state.email = {
+    to: $('emailTo').value.trim(),
+    subj: $('emailSubj').value.trim() || 'SymptomTap export',
+    ejService: $('ejService').value.trim(),
+    ejTemplate: $('ejTemplate').value.trim(),
+    ejPublic: $('ejPublic').value.trim(),
+  };
+  localStorage.setItem('email', JSON.stringify(state.email));
+  alert('Email settings saved.');
+}
+async function sendEmailNow(){
+  const to = (state.email?.to||'').trim();
+  if(!to){ alert('Please enter your email address first.'); return; }
+  const { csv, filename } = await buildCSV();
+
+  if(state.email?.ejService && state.email?.ejTemplate && state.email?.ejPublic){
+    try{
+      emailjs.init(state.email.ejPublic);
+      const attachment = btoa(unescape(encodeURIComponent(csv)));
+      await emailjs.send(state.email.ejService, state.email.ejTemplate, {
+        to_email: to, subject: state.email?.subj || 'SymptomTap export',
+        message: 'CSV export attached', filename, csv_base64: attachment
+      });
+      alert('Email sent.');
+      return;
+    }catch(e){
+      alert(`EmailJS send failed: ${e.message}\nFalling back to your mail client…`);
+    }
+  }
+  // mailto fallback with blob link
+  const blob = new Blob([csv], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+  const subj = encodeURIComponent(state.email?.subj || 'SymptomTap export');
+  const body = encodeURIComponent(`CSV download link (valid while this tab stays open):\n${url}\n\nFilename: ${filename}\n`);
+  window.location.href = `mailto:${to}?subject=${subj}&body=${body}`;
+}
+
+// Optional cloud (Advanced)
+function supabaseClient(){
+  const url = state.cfg?.url, key = state.cfg?.key;
+  if(!url || !key) return null;
+  return window.supabase.createClient(url, key, { auth:{ persistSession:false } });
+}
+async function trySync(){
+  setDots(); updateCacheCount();
+  if(!netStatus()) return;
+  const sb = supabaseClient(); if(!sb) return;
+  if(state.syncing) return; state.syncing=true; setDots();
+  const queue = await getAllLocal(); if(queue.length===0){ state.syncing=false; setDots(); return; }
+  const schema = state.cfg?.schema || 'public';
+  const table = state.cfg?.table || 'symptom_events';
+  const batches = chunkArray(queue, 500);
+  try{
+    for(const batch of batches){
+      const { error } = await sb.schema(schema).from(table).insert(batch); // ← fixed (no double dot)
+      if(error) throw error;
+    }
+    await clearLocal();
+  }catch(e){
+    console.error('Sync error', e); $('syncText').textContent = 'sync failed';
+  }finally{
+    state.syncing=false; setDots(); renderRecent(); updateCacheCount();
+  }
+}
+function saveCfg(){
+  state.cfg = {
+    url: $('sbUrl').value.trim(),
+    key: $('sbKey').value.trim(),
+    schema: $('sbSchema').value.trim()||'public',
+    table: $('sbTable').value.trim()||'symptom_events'
+  };
+  localStorage.setItem('cfg', JSON.stringify(state.cfg));
+  alert('Saved!');
+}
+async function testConn(){
+  const sb = supabaseClient(); if(!sb){ alert('Missing URL/key.'); return; }
+  try{
+    const schema = state.cfg?.schema || 'public';
+    const table = state.cfg?.table || 'symptom_events';
+    const { data, error } = await sb.schema(schema).from(table).select('*').limit(1);
+    if(error) throw error;
+    alert('Connection OK. Table reachable.');
+  }catch(e){ alert('Connection failed: '+ e.message); }
+}
+
+// UI wiring + init
+function addCustom(){
+  const label = prompt('New symptom label (e.g., "Tingling – left foot")');
+  if(!label) return;
+  const category = prompt('Category (e.g., neuro, motor, cardio)')||'';
+  state.buttons.push({label, category});
+  localStorage.setItem('buttons', JSON.stringify(state.buttons));
+  renderButtons();
+  if(confirm('Log one now?')){ logTap(label, category); }
+}
+function fillCfgInputs(){
+  $('sbUrl').value = state.cfg?.url||'';
+  $('sbKey').value = state.cfg?.key||'';
+  $('sbSchema').value = state.cfg?.schema||'';
+  $('sbTable').value = state.cfg?.table||'';
+}
+window.addEventListener('online', trySync);
+window.addEventListener('offline', setDots);
+
+// Self-tests (optional): add #selftest to URL
+async function runSelfTests(){
+  const results = [];
+  function ok(name, cond){ results.push({name, pass:!!cond}); if(!cond) console.error('TEST FAIL:', name); }
+  ok('csvCell comma', csvCell('a,b') === '"a,b"');
+  ok('csvCell quotes', csvCell('a"b') === '"a""b"');
+  ok('csvCell newline', csvCell('a\nb') === '"a\nb"');
+  ok('csvCell plain', csvCell('ab') === 'ab');
+  const chunks = chunkArray([1,2,3,4,5],2);
+  ok('chunk len', chunks.length === 3);
+  ok('chunk last', JSON.stringify(chunks[2]) === JSON.stringify([5]));
+  console.log('Self-tests:', results);
+}
+if (location.hash.includes('selftest')) { runSelfTests(); }
+
+// Init
+renderButtons(); renderRecent(); setDots(); updateCacheCount();
+fillEmailInputs(); fillCfgInputs();
+$('addCustom').onclick = addCustom;
+$('exportCsv').onclick = async ()=>{
+  const { csv, filename } = await buildCSV();
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob); const a=document.createElement('a');
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+};
+$('sendEmailNow').onclick = sendEmailNow;
+$('saveEmailCfg').onclick = saveEmailCfg;
+$('saveCfg').onclick = saveCfg;
+$('testConn').onclick = testConn;
+$('forceSync').onclick = trySync;
+</script>
+</body>
+</html>
